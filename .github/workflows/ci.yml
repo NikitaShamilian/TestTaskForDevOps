@@ -7,9 +7,8 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-# Глобальные переменные окружения
 env:
-  # Принудительно используем Node 24 для JavaScript-экшенов (деприкация Node 20)
+
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -17,7 +16,6 @@ jobs:
     name: Build multi-arch and push to GHCR
     runs-on: ubuntu-latest
 
-    # Нужны права на чтение кода и запись в GitHub Container Registry
     permissions:
       contents: read
       packages: write
@@ -30,11 +28,9 @@ jobs:
         id: vars
         shell: bash
         run: |
-
           REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           echo "image_front=ghcr.io/${REPO_LC}-frontend" >> "$GITHUB_OUTPUT"
           echo "image_back=ghcr.io/${REPO_LC}-backend" >> "$GITHUB_OUTPUT"
-
           echo "sha_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "branch_tag=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
 
@@ -85,20 +81,23 @@ jobs:
           IMAGE_FRONT: ${{ steps.vars.outputs.image_front }}
           IMAGE_BACK: ${{ steps.vars.outputs.image_back }}
           SHA_TAG: ${{ steps.vars.outputs.sha_tag }}
+        shell: bash
         run: |
           if [ -z "${TG_BOT_TOKEN}" ] || [ -z "${TG_CHAT_ID}" ]; then
             echo "TG secrets are not set, skipping Telegram notification."
             exit 0
           fi
-          MSG="CI: Build & push succeeded
+          MSG="$(cat <<'EOF'
+CI: Build & push succeeded
 Repo: ${GITHUB_REPOSITORY}
 Branch: ${GITHUB_REF_NAME}
 Commit: ${GITHUB_SHA::7}
 Front: ${IMAGE_FRONT}:${SHA_TAG}
-Back:  ${IMAGE_BACK}:${SHA_TAG}"
+Back:  ${IMAGE_BACK}:${SHA_TAG}
+EOF
+)"
           curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TG_CHAT_ID}" \
-            -d parse_mode=Markdown \
             --data-urlencode "text=${MSG}"
 
       - name: Notify Telegram (failure)
@@ -106,17 +105,20 @@ Back:  ${IMAGE_BACK}:${SHA_TAG}"
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        shell: bash
         run: |
           if [ -z "${TG_BOT_TOKEN}" ] || [ -z "${TG_CHAT_ID}" ]; then
             echo "TG secrets are not set, skipping Telegram notification."
             exit 0
           fi
-          MSG="CI FAILED
+          MSG="$(cat <<'EOF'
+CI FAILED
 Repo: ${GITHUB_REPOSITORY}
 Branch: ${GITHUB_REF_NAME}
 Commit: ${GITHUB_SHA::7}
-Workflow: ${GITHUB_WORKFLOW}"
+Workflow: ${GITHUB_WORKFLOW}
+EOF
+)"
           curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TG_CHAT_ID}" \
-            -d parse_mode=Markdown \
             --data-urlencode "text=${MSG}"
