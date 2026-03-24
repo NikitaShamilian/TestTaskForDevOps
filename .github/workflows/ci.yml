@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-
+  # Принудительно используем Node 24 для JavaScript-экшенов (деприкация Node 20)
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -89,11 +89,11 @@ jobs:
           fi
           MSG="$(cat <<'EOF'
 CI: Build & push succeeded
-Repo: ${GITHUB_REPOSITORY}
+Repository: ${GITHUB_REPOSITORY}
 Branch: ${GITHUB_REF_NAME}
 Commit: ${GITHUB_SHA::7}
-Front: ${IMAGE_FRONT}:${SHA_TAG}
-Back:  ${IMAGE_BACK}:${SHA_TAG}
+Frontend image: ${IMAGE_FRONT}:${SHA_TAG}
+Backend image:  ${IMAGE_BACK}:${SHA_TAG}
 EOF
 )"
           curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
@@ -113,7 +113,7 @@ EOF
           fi
           MSG="$(cat <<'EOF'
 CI FAILED
-Repo: ${GITHUB_REPOSITORY}
+Repository: ${GITHUB_REPOSITORY}
 Branch: ${GITHUB_REF_NAME}
 Commit: ${GITHUB_SHA::7}
 Workflow: ${GITHUB_WORKFLOW}
