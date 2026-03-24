@@ -7,13 +7,17 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+# Глобальные переменные окружения
 env:
-
+  # Принудительно используем Node 24 для JavaScript-экшенов (деприкация Node 20)
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-and-push:
+    name: Build multi-arch and push to GHCR
     runs-on: ubuntu-latest
+
+    # Нужны права на чтение кода и запись в GitHub Container Registry
     permissions:
       contents: read
       packages: write
@@ -22,13 +26,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Вычислить имена образов и теги (в нижнем регистре)
+      - name: Compute image names and tags (lowercase)
         id: vars
         shell: bash
         run: |
+
           REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           echo "image_front=ghcr.io/${REPO_LC}-frontend" >> "$GITHUB_OUTPUT"
           echo "image_back=ghcr.io/${REPO_LC}-backend" >> "$GITHUB_OUTPUT"
+
           echo "sha_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "branch_tag=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
 
@@ -45,7 +51,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.CR_PAT }}
 
-      - name: Build and push frontend
+      - name: Build and push frontend (amd64+arm64)
         uses: docker/build-push-action@v6
         with:
           context: ./front/html
@@ -55,8 +61,10 @@ jobs:
             ${{ steps.vars.outputs.image_front }}:latest
             ${{ steps.vars.outputs.image_front }}:${{ steps.vars.outputs.sha_tag }}
             ${{ steps.vars.outputs.image_front }}:${{ steps.vars.outputs.branch_tag }}
+          cache-from: type=registry,ref=${{ steps.vars.outputs.image_front }}:buildcache
+          cache-to: type=registry,ref=${{ steps.vars.outputs.image_front }}:buildcache,mode=max
 
-      - name: Build and push backend
+      - name: Build and push backend (amd64+arm64)
         uses: docker/build-push-action@v6
         with:
           context: ./api
@@ -66,3 +74,49 @@ jobs:
             ${{ steps.vars.outputs.image_back }}:latest
             ${{ steps.vars.outputs.image_back }}:${{ steps.vars.outputs.sha_tag }}
             ${{ steps.vars.outputs.image_back }}:${{ steps.vars.outputs.branch_tag }}
+          cache-from: type=registry,ref=${{ steps.vars.outputs.image_back }}:buildcache
+          cache-to: type=registry,ref=${{ steps.vars.outputs.image_back }}:buildcache,mode=max
+
+      - name: Notify Telegram (success)
+        if: success()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          IMAGE_FRONT: ${{ steps.vars.outputs.image_front }}
+          IMAGE_BACK: ${{ steps.vars.outputs.image_back }}
+          SHA_TAG: ${{ steps.vars.outputs.sha_tag }}
+        run: |
+          if [ -z "${TG_BOT_TOKEN}" ] || [ -z "${TG_CHAT_ID}" ]; then
+            echo "TG secrets are not set, skipping Telegram notification."
+            exit 0
+          fi
+          MSG="CI: Build & push succeeded
+Repo: ${GITHUB_REPOSITORY}
+Branch: ${GITHUB_REF_NAME}
+Commit: ${GITHUB_SHA::7}
+Front: ${IMAGE_FRONT}:${SHA_TAG}
+Back:  ${IMAGE_BACK}:${SHA_TAG}"
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" \
+            -d parse_mode=Markdown \
+            --data-urlencode "text=${MSG}"
+
+      - name: Notify Telegram (failure)
+        if: failure()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          if [ -z "${TG_BOT_TOKEN}" ] || [ -z "${TG_CHAT_ID}" ]; then
+            echo "TG secrets are not set, skipping Telegram notification."
+            exit 0
+          fi
+          MSG="CI FAILED
+Repo: ${GITHUB_REPOSITORY}
+Branch: ${GITHUB_REF_NAME}
+Commit: ${GITHUB_SHA::7}
+Workflow: ${GITHUB_WORKFLOW}"
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" \
+            -d parse_mode=Markdown \
+            --data-urlencode "text=${MSG}"
