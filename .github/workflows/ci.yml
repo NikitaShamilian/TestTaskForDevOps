@@ -11,6 +11,10 @@ env:
   IMAGE_FRONT: ghcr.io/${{ github.repository }}-frontend
   IMAGE_BACK: ghcr.io/${{ github.repository }}-backend
 
+  TG_BOT_TOKEN: ""
+  TG_CHAT_ID: ""
+  DISCORD_WEBHOOK: ""
+
 jobs:
   build-and-push:
     name: Build multi-arch and push to GHCR
@@ -71,33 +75,43 @@ jobs:
           cache-to: type=registry,ref=${{ env.IMAGE_BACK }}:buildcache,mode=max
 
       - name: Notify Telegram (success)
-        if: success() && secrets.TG_BOT_TOKEN != '' && secrets.TG_CHAT_ID != ''
+        if: success() && env.TG_BOT_TOKEN != '' && env.TG_CHAT_ID != ''
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           MSG="CI: Build & push succeeded\nRepo: $GITHUB_REPOSITORY\nBranch: $GITHUB_REF_NAME\nCommit: ${GITHUB_SHA::7}\nFront: ${{ env.IMAGE_FRONT }}:${{ steps.vars.outputs.sha_tag }}\nBack:  ${{ env.IMAGE_BACK }}:${{ steps.vars.outputs.sha_tag }}"
-          curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage \
-            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
+          curl -s -X POST https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage \
+            -d chat_id="${TG_CHAT_ID}" \
             -d parse_mode=Markdown \
             --data-urlencode "text=${MSG}"
 
       - name: Notify Discord (success)
-        if: success() && secrets.DISCORD_WEBHOOK != ''
+        if: success() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           curl -H "Content-Type: application/json" \
                -d "{\"content\":\"CI succeeded for ${GITHUB_REPOSITORY} (${GITHUB_REF_NAME} @ ${GITHUB_SHA::7})\"}" \
-               "${{ secrets.DISCORD_WEBHOOK }}"
+               "${DISCORD_WEBHOOK}"
 
       - name: Notify Telegram (failure)
-        if: failure() && secrets.TG_BOT_TOKEN != '' && secrets.TG_CHAT_ID != ''
+        if: failure() && env.TG_BOT_TOKEN != '' && env.TG_CHAT_ID != ''
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           MSG="CI FAILED\nRepo: $GITHUB_REPOSITORY\nBranch: $GITHUB_REF_NAME\nCommit: ${GITHUB_SHA::7}\nWorkflow: $GITHUB_WORKFLOW"
-          curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage \
-            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
+          curl -s -X POST https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage \
+            -d chat_id="${TG_CHAT_ID}" \
             -d parse_mode=Markdown \
             --data-urlencode "text=${MSG}"
 
       - name: Notify Discord (failure)
-        if: failure() && secrets.DISCORD_WEBHOOK != ''
+        if: failure() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           curl -H "Content-Type: application/json" \
                -d "{\"content\":\"CI failed for ${GITHUB_REPOSITORY} (${GITHUB_REF_NAME} @ ${GITHUB_SHA::7})\"}" \
-               "${{ secrets.DISCORD_WEBHOOK }}"
+               "${DISCORD_WEBHOOK}"
