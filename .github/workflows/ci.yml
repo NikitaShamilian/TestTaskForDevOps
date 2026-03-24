@@ -1,0 +1,103 @@
+name: CI - Build and Push Docker images (amd64+arm64)
+
+on:
+  push:
+    branches: [ "main", "docker-ci", "feature/**" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  IMAGE_FRONT: ghcr.io/${{ github.repository }}-frontend
+  IMAGE_BACK: ghcr.io/${{ github.repository }}-backend
+
+jobs:
+  build-and-push:
+    name: Build multi-arch and push to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.CR_PAT }}
+
+      - name: Compute tags
+        id: vars
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          BRANCH_TAG=${GITHUB_REF_NAME//\//-}
+          echo "sha_tag=${SHA_TAG}" >> $GITHUB_OUTPUT
+          echo "branch_tag=${BRANCH_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Build and push frontend (amd64+arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./front/html
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_FRONT }}:latest
+            ${{ env.IMAGE_FRONT }}:${{ steps.vars.outputs.sha_tag }}
+            ${{ env.IMAGE_FRONT }}:${{ steps.vars.outputs.branch_tag }}
+          cache-from: type=registry,ref=${{ env.IMAGE_FRONT }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_FRONT }}:buildcache,mode=max
+
+      - name: Build and push backend (amd64+arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_BACK }}:latest
+            ${{ env.IMAGE_BACK }}:${{ steps.vars.outputs.sha_tag }}
+            ${{ env.IMAGE_BACK }}:${{ steps.vars.outputs.branch_tag }}
+          cache-from: type=registry,ref=${{ env.IMAGE_BACK }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_BACK }}:buildcache,mode=max
+
+      - name: Notify Telegram (success)
+        if: success() && secrets.TG_BOT_TOKEN != '' && secrets.TG_CHAT_ID != ''
+        run: |
+          MSG="CI: Build & push succeeded\nRepo: $GITHUB_REPOSITORY\nBranch: $GITHUB_REF_NAME\nCommit: ${GITHUB_SHA::7}\nFront: ${{ env.IMAGE_FRONT }}:${{ steps.vars.outputs.sha_tag }}\nBack:  ${{ env.IMAGE_BACK }}:${{ steps.vars.outputs.sha_tag }}"
+          curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage \
+            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
+            -d parse_mode=Markdown \
+            --data-urlencode "text=${MSG}"
+
+      - name: Notify Discord (success)
+        if: success() && secrets.DISCORD_WEBHOOK != ''
+        run: |
+          curl -H "Content-Type: application/json" \
+               -d "{\"content\":\"CI succeeded for ${GITHUB_REPOSITORY} (${GITHUB_REF_NAME} @ ${GITHUB_SHA::7})\"}" \
+               "${{ secrets.DISCORD_WEBHOOK }}"
+
+      - name: Notify Telegram (failure)
+        if: failure() && secrets.TG_BOT_TOKEN != '' && secrets.TG_CHAT_ID != ''
+        run: |
+          MSG="CI FAILED\nRepo: $GITHUB_REPOSITORY\nBranch: $GITHUB_REF_NAME\nCommit: ${GITHUB_SHA::7}\nWorkflow: $GITHUB_WORKFLOW"
+          curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage \
+            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
+            -d parse_mode=Markdown \
+            --data-urlencode "text=${MSG}"
+
+      - name: Notify Discord (failure)
+        if: failure() && secrets.DISCORD_WEBHOOK != ''
+        run: |
+          curl -H "Content-Type: application/json" \
+               -d "{\"content\":\"CI failed for ${GITHUB_REPOSITORY} (${GITHUB_REF_NAME} @ ${GITHUB_SHA::7})\"}" \
+               "${{ secrets.DISCORD_WEBHOOK }}"
