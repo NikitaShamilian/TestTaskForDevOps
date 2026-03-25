@@ -1,0 +1,108 @@
+name: CI - Build and Push Docker images (amd64+arm64)
+
+on:
+  push:
+    branches: [ "main", "docker-ci", "feature/**" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-and-push:
+    name: Build multi-arch and push to GHCR
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image names and tags (lowercase)
+        id: vars
+        shell: bash
+        run: |
+          REPO_LC="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          echo "image_front=ghcr.io/${REPO_LC}-frontend" >> "$GITHUB_OUTPUT"
+          echo "image_back=ghcr.io/${REPO_LC}-backend" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "branch_tag=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.CR_PAT }}
+
+      - name: Build and push frontend (amd64+arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./front/html
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.vars.outputs.image_front }}:latest
+            ${{ steps.vars.outputs.image_front }}:${{ steps.vars.outputs.sha_tag }}
+            ${{ steps.vars.outputs.image_front }}:${{ steps.vars.outputs.branch_tag }}
+          cache-from: type=registry,ref=${{ steps.vars.outputs.image_front }}:buildcache
+          cache-to: type=registry,ref=${{ steps.vars.outputs.image_front }}:buildcache,mode=max
+
+      - name: Build and push backend (amd64+arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.vars.outputs.image_back }}:latest
+            ${{ steps.vars.outputs.image_back }}:${{ steps.vars.outputs.sha_tag }}
+            ${{ steps.vars.outputs.image_back }}:${{ steps.vars.outputs.branch_tag }}
+          cache-from: type=registry,ref=${{ steps.vars.outputs.image_back }}:buildcache
+          cache-to: type=registry,ref=${{ steps.vars.outputs.image_back }}:buildcache,mode=max
+
+      - name: Notify Telegram (success)
+        if: success()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          IMAGE_FRONT: ${{ steps.vars.outputs.image_front }}
+          IMAGE_BACK: ${{ steps.vars.outputs.image_back }}
+          SHA_TAG: ${{ steps.vars.outputs.sha_tag }}
+        shell: bash
+        run: |
+          if [ -z "${TG_BOT_TOKEN}" ] || [ -z "${TG_CHAT_ID}" ]; then
+            echo "TG secrets are not set, skipping Telegram notification."
+            exit 0
+          fi
+          MSG="Успешено ${GITHUB_REPOSITORY}; Ветка: ${GITHUB_REF_NAME}; Коммит: ${GITHUB_SHA::7}"
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" \
+            --data-urlencode "text=${MSG}"
+
+      - name: Notify Telegram (failure)
+        if: failure()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        shell: bash
+        run: |
+          if [ -z "${TG_BOT_TOKEN}" ] || [ -z "${TG_CHAT_ID}" ]; then
+            echo "TG secrets are not set, skipping Telegram notification."
+            exit 0
+          fi
+          MSG="Ошибка ${GITHUB_REPOSITORY};  Ветка: ${GITHUB_REF_NAME};  Коммит: ${GITHUB_SHA::7}"
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" \
+            --data-urlencode "text=${MSG}"
